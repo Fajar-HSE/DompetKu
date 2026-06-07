@@ -8,6 +8,7 @@ const todayCommand = require('./today');
 const monthCommand = require('./month');
 const deleteCommand = require('./delete');
 const reminderCommand = require('./reminder');
+const { handlePhoto, handleReceiptCallback } = require('./receipt');
 
 /**
  * Register all commands and middleware on the bot instance.
@@ -33,6 +34,10 @@ function registerCommands(bot) {
   bot.command('hapus', deleteCommand);
   bot.command('reminder_on', reminderCommand.on);
   bot.command('reminder_off', reminderCommand.off);
+
+  // Handler foto struk
+  bot.on('photo', handlePhoto);
+  bot.on('callback_query', handleReceiptCallback);
 
   // Handle unknown text
   bot.on('text', async (ctx) => {
