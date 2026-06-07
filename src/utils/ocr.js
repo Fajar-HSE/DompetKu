@@ -21,7 +21,7 @@ async function extractTextFromImage(fileUrl) {
       filename: 'struk.jpg',
       contentType: 'image/jpeg',
     });
-    form.append('language', 'ind');   // Bahasa Indonesia
+    form.append('language', 'eng');   // eng support angka & teks struk Indonesia
     form.append('isOverlayRequired', 'false');
     form.append('detectOrientation', 'true');
     form.append('scale', 'true');
