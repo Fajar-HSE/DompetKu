@@ -1,10 +1,11 @@
 const { findUserByTelegramId } = require('../db/users');
 const { getRecentTransactions, deleteTransaction } = require('../db/transactions');
 const { formatRupiah } = require('../utils/format');
+const { PendingStore } = require('../utils/pendingStore');
 const logger = require('../utils/logger');
 
-// In-memory store for pending delete confirmations: telegramId → transactionId
-const pendingDeletes = new Map();
+// TTL 5 menit: list hapus expired otomatis, mencegah memory leak
+const pendingDeletes = new PendingStore();
 
 module.exports = async function deleteCommand(ctx) {
   const from = ctx.from;
@@ -15,7 +16,7 @@ module.exports = async function deleteCommand(ctx) {
 
     const args = ctx.message.text.split(/\s+/).slice(1);
 
-    // Step 1: "/hapus" with no argument → show list
+    // Step 1: "/hapus" tanpa argumen → tampilkan daftar
     if (args.length === 0) {
       const recent = await getRecentTransactions(user.id, 10);
 
@@ -26,23 +27,30 @@ module.exports = async function deleteCommand(ctx) {
       let list = '🗑 *10 Transaksi Terakhir:*\n\n';
       recent.forEach((t, i) => {
         const sign = t.type === 'income' ? '+' : '-';
-        list += `${i + 1}. ${sign}${formatRupiah(t.amount)} ${t.note || ''} _(${t.category})_ — ${t.date}\n`;
+        const noteText = t.note ? ` ${t.note}` : '';
+        list += `${i + 1}. ${sign}${formatRupiah(t.amount)}${noteText} _(${t.category})_ — ${t.date}\n`;
       });
-      list += '\nBalas dengan `/hapus <nomor>` untuk menghapus.';
+      list += '\nBalas dengan `/hapus <nomor>` untuk menghapus.\n_Daftar berlaku 5 menit._';
 
-      // Store list for this user so we can map number → id
+      // Simpan mapping nomor → id dengan TTL
       pendingDeletes.set(from.id, recent.map((t) => t.id));
 
       return ctx.replyWithMarkdown(list);
     }
 
-    // Step 2: "/hapus <number>"
-    const index = parseInt(args[0], 10) - 1; // convert to 0-based
+    // Step 2: "/hapus <nomor>"
+    const index = parseInt(args[0], 10) - 1; // konversi ke 0-based
     const ids = pendingDeletes.get(from.id);
 
-    if (!ids || isNaN(index) || index < 0 || index >= ids.length) {
+    if (!ids) {
       return ctx.reply(
-        '⚠️ Nomor tidak valid. Kirim /hapus (tanpa angka) untuk melihat daftar dulu.'
+        '⚠️ Daftar sudah expired atau belum ditampilkan.\nKirim /hapus (tanpa angka) untuk melihat daftar dulu.'
+      );
+    }
+
+    if (isNaN(index) || index < 0 || index >= ids.length) {
+      return ctx.reply(
+        `⚠️ Nomor tidak valid. Masukkan angka 1–${ids.length}.`
       );
     }
 

@@ -2,14 +2,14 @@ const { findUserByTelegramId } = require('../db/users');
 const { insertTransaction, getTodayTransactions, summarise } = require('../db/transactions');
 const { extractTextFromImage, extractTotalFromText } = require('../utils/ocr');
 const { formatRupiah } = require('../utils/format');
+const { PendingStore } = require('../utils/pendingStore');
 const logger = require('../utils/logger');
 
-// Simpan state konfirmasi per user: telegramId → { amount, note }
-const pendingReceipts = new Map();
+// TTL 5 menit: konfirmasi struk expired otomatis, mencegah memory leak
+const pendingReceipts = new PendingStore();
 
 /**
- * Handler saat user kirim foto.
- * Dipanggil dari commands/index.js via bot.on('photo', ...)
+ * Handler saat user kirim foto struk.
  */
 async function handlePhoto(ctx) {
   const from = ctx.from;
@@ -25,6 +25,11 @@ async function handlePhoto(ctx) {
     // Ambil foto resolusi tertinggi
     const photos = ctx.message.photo;
     const bestPhoto = photos[photos.length - 1];
+
+    // Batasi ukuran file: Telegram max ~20MB, tapi kita batasi 5MB
+    if (bestPhoto.file_size && bestPhoto.file_size > 5 * 1024 * 1024) {
+      return ctx.reply('⚠️ Foto terlalu besar (maks 5MB). Kompres foto terlebih dahulu.');
+    }
 
     // Dapatkan URL file dari Telegram
     const fileLink = await ctx.telegram.getFileLink(bestPhoto.file_id);
@@ -50,14 +55,14 @@ async function handlePhoto(ctx) {
       );
     }
 
-    // Simpan pending confirmation
+    // Simpan pending confirmation dengan TTL
     pendingReceipts.set(from.id, { amount, note: 'struk belanja' });
 
     // Tanya konfirmasi ke user dengan inline keyboard
     await ctx.replyWithMarkdown(
       `🧾 *Struk terdeteksi!*\n\n` +
       `💸 Total: *${formatRupiah(amount)}*\n\n` +
-      `Simpan sebagai pengeluaran?`,
+      `Simpan sebagai pengeluaran? _(berlaku 5 menit)_`,
       {
         reply_markup: {
           inline_keyboard: [
@@ -82,12 +87,18 @@ async function handlePhoto(ctx) {
 
 /**
  * Handler untuk callback button konfirmasi struk.
+ * Hanya proses action yang dikenal untuk mencegah unexpected behavior.
  */
 async function handleReceiptCallback(ctx) {
   const from = ctx.from;
-  const action = ctx.callbackQuery.data;
+  const action = ctx.callbackQuery?.data;
 
-  await ctx.answerCbQuery(); // hapus loading di tombol
+  // Hanya proses callback yang relevan dengan receipt
+  if (!action || !['receipt_confirm', 'receipt_cancel', 'receipt_edit'].includes(action)) {
+    return ctx.answerCbQuery();
+  }
+
+  await ctx.answerCbQuery();
 
   try {
     const user = await findUserByTelegramId(from.id);
@@ -97,7 +108,7 @@ async function handleReceiptCallback(ctx) {
 
     if (action === 'receipt_confirm') {
       if (!pending) {
-        return ctx.editMessageText('⚠️ Data struk tidak ditemukan. Kirim ulang foto struk.');
+        return ctx.editMessageText('⚠️ Konfirmasi expired. Kirim ulang foto struk.');
       }
 
       await insertTransaction({
@@ -124,17 +135,18 @@ async function handleReceiptCallback(ctx) {
 
     } else if (action === 'receipt_edit') {
       if (!pending) {
-        return ctx.editMessageText('⚠️ Data struk tidak ditemukan. Kirim ulang foto struk.');
+        return ctx.editMessageText('⚠️ Konfirmasi expired. Kirim ulang foto struk.');
       }
+      const savedAmount = pending.amount;
       pendingReceipts.delete(from.id);
       await ctx.editMessageText(
         `✏️ Input manual nominal yang benar:\n\n` +
-        `\`/k ${pending.amount} struk belanja #belanja\``
+        `/k ${savedAmount} struk belanja #belanja`
       );
     }
   } catch (err) {
     logger.error('handleReceiptCallback error:', err);
-    await ctx.reply('❌ Terjadi kesalahan. Coba lagi.');
+    await ctx.reply('❌ Terjadi kesalahan. Coba lagi.').catch(() => {});
   }
 }
 

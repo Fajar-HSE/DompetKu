@@ -3,10 +3,14 @@ const express = require('express');
 const { Telegraf } = require('telegraf');
 const cron = require('node-cron');
 
+const { validateEnv } = require('./utils/validateEnv');
 const { setupWebhook } = require('./webhook');
 const registerCommands = require('./commands');
 const { sendDailyReminders } = require('./scheduler');
 const logger = require('./utils/logger');
+
+// Validasi env variables sebelum apapun diinisialisasi
+validateEnv();
 
 const app = express();
 app.use(express.json());

@@ -6,48 +6,62 @@ function formatRupiah(amount) {
 }
 
 /**
- * Parse command arguments for /k and /m:
+ * Parse command arguments untuk /k dan /m:
  *   "/k 15000 nasi goreng #makanan"
- * Returns { amount, note, category } or null if invalid.
+ * Returns { amount, note, category } atau null jika tidak valid.
  */
 function parseTransactionArgs(text) {
-  // Remove command prefix (/k, /m, /keluar, /masuk) then trim
+  // Hapus command prefix (/k, /m, /keluar, /masuk) lalu trim
   const body = text.replace(/^\/\S+\s*/, '').trim();
 
   if (!body) return null;
 
-  // Extract category from #tag
-  const categoryMatch = body.match(/#(\S+)/);
-  const category = categoryMatch ? categoryMatch[1] : 'Lainnya';
+  // Ekstrak kategori dari #tag
+  const categoryMatch = body.match(/#([A-Za-z0-9_\u00C0-\u024F]+)/);
+  const rawCategory = categoryMatch ? categoryMatch[1] : 'Lainnya';
+
+  // Sanitasi kategori: maks 50 karakter, hanya karakter aman
+  const category = rawCategory.slice(0, 50);
   const withoutCategory = body.replace(/#\S+/, '').trim();
 
-  // First token must be the amount
+  // Token pertama harus nominal
   const parts = withoutCategory.split(/\s+/);
   const rawAmount = parts[0];
 
-  // Allow amounts like 15000, 15.000, 15,000
-  const amount = parseInt(rawAmount.replace(/[.,]/g, ''), 10);
-  if (isNaN(amount) || amount <= 0) return null;
+  if (!rawAmount) return null;
 
-  const note = parts.slice(1).join(' ').trim() || null;
+  // Izinkan format: 15000, 15.000, 15,000
+  const amount = parseInt(rawAmount.replace(/[.,]/g, ''), 10);
+
+  // Validasi: harus angka positif, maksimal 1 triliun
+  if (isNaN(amount) || amount <= 0 || amount > 1_000_000_000_000) return null;
+
+  // Sanitasi note: maks 200 karakter
+  const rawNote = parts.slice(1).join(' ').trim();
+  const note = rawNote ? rawNote.slice(0, 200) : null;
 
   return { amount, note, category };
 }
 
 /**
- * Build a summary report string from a list of transactions.
+ * Buat teks ringkasan dari daftar transaksi.
  */
 function buildSummaryText(transactions, label) {
-  const { summarise } = require('../db/transactions');
-  const { totalIncome, totalExpense, balance } = summarise(transactions);
-
-  // Group expenses by category
+  // Import di dalam fungsi dihindari — gunakan parameter langsung
+  let totalIncome = 0;
+  let totalExpense = 0;
   const byCategory = {};
+
   for (const t of transactions) {
-    if (t.type === 'expense') {
+    if (t.type === 'income') {
+      totalIncome += t.amount;
+    } else {
+      totalExpense += t.amount;
       byCategory[t.category] = (byCategory[t.category] || 0) + t.amount;
     }
   }
+
+  const balance = totalIncome - totalExpense;
 
   let text = `📊 *Ringkasan ${label}*\n\n`;
   text += `💰 Pemasukan : ${formatRupiah(totalIncome)}\n`;
